@@ -21,7 +21,7 @@
     function hookReq(socket, commands, hook) {
       if (!Array.isArray(commands)) commands = [commands]
       for (let command of commands) {
-        if (hookMaps[socket].has(command)) throw new Error(`Can\'t hook ${command} twice.`)
+        if (hookMaps[socket].has(command)) throw new Error(`Can't hook ${command} twice.`)
         hookMaps[socket].set(command, hook)
       }
     }
@@ -53,23 +53,27 @@
   function saveConfig() {
     localStorage.setItem('8q_config', JSON.stringify(config))
   }
-  // 记录 account_id，换当前皮肤、称号
-  let account_id
+  // 记录 account_id acturalTitle，换当前皮肤、称号
+  let account_id, acturalTitle
   hookRes('Lobby', ['login', 'oauth2Login'], function (resLogin) {
     account_id = resLogin.account_id // or resLogin.account.account_id
     resLogin.account.avatar_id = config.skin[config.main_character_id]
+    acturalTitle = resLogin.account.title
     resLogin.account.title = config.title
     return resLogin
   })
   // 记录 characterMap skinSet acturalCharacter，开启宿舍全角色羁绊皮肤额外表情
   let characterMap = new Map(), skinSet, acturalCharacter
   hookRes('Lobby', 'fetchCharacterInfo', function (charInfo) {
-    for (let char of charInfo.characters) characterMap.set(char.charid, char)
+    for (let char of charInfo.characters) {
+      if (!char.views) char.views = []
+      characterMap.set(char.charid, char)
+    }
     skinSet = new Set(charInfo.skins)
     charInfo.characters = []
     charInfo.skins = []
     let configChanged = false
-    for (let char of cfg.item_definition.character.rows_) {
+    for (let char of window.cfg.item_definition.character.rows_) {
       if (!config.skin[char.id]) {
         configChanged = true
         config.skin[char.id] = char.full_fetter_skin || char.init_skin
@@ -78,10 +82,10 @@
         charid: char.id,
         level: 5,
         exp: 0,
-        views: [...config.views[config.main_character_id]],
+        views: (config.views[char.id] || (characterMap.has(char.id) ? characterMap.get(char.id).views : [])).slice(),
         skin: config.skin[char.id],
         is_upgraded: true,
-        extra_emoji: cfg.character.emoji.groups_[char.id].map(emoji => emoji.sub_id),
+        extra_emoji: window.cfg.character.emoji.groups_[char.id].map(emoji => emoji.sub_id),
       })
       charInfo.skins.push(char.init_skin)
       if (char.full_fetter_skin) charInfo.skins.push(char.full_fetter_skin)
@@ -103,23 +107,32 @@
       charid: config.main_character_id,
       level: 5,
       exp: 0,
-      views: [...config.views[config.main_character_id]],
+      views: config.views[config.main_character_id].slice(),
       skin: config.skin[config.main_character_id],
       is_upgraded: true,
-      extra_emoji: [...characterMap.get(acturalCharacter).extra_emoji],
+      extra_emoji: (characterMap.get(acturalCharacter).extra_emoji || []).slice(), // 不能发自己没有的表情
     }
+    Object.defineProperty(me.character, 'charid', {
+      enumerable: true,
+      configurable: true,
+      get: function get() { // make ESLint happy
+        const inst = window.uiscript.UI_DesktopInfo.Inst,
+          isMe = inst && (get.caller === inst.block_emo.initRoom || get.caller === inst.initRoom || get.caller === inst.onShowEmo)
+        return isMe ? acturalCharacter : config.main_character_id
+      },
+    })
     me.title = config.title
     me.avatar_id = config.skin[config.main_character_id]
     return gameInfo
   })
   // 开启牌谱中皮肤装扮
   hookRes('Lobby', 'fetchGameRecord', function (gameRecord) {
-    const me = gameRecord.head.accounts.find(account => account.account_id === account_id);
+    const me = gameRecord.head.accounts.find(account => account.account_id === account_id)
     me.character = {
       charid: config.main_character_id,
       level: 5,
       exp: 0,
-      views: [...config.views[config.main_character_id]],
+      views: config.views[config.main_character_id].slice(),
       skin: config.skin[config.main_character_id],
       is_upgraded: true,
     }
@@ -129,7 +142,7 @@
   })
   // 进入房间时的头像和称号
   hookRes('Lobby', ['createRoom', 'joinRoom', 'fetchRoom'], function (roomInfo) {
-    const me = roomInfo.room.persons.find(player => player.account_id === account_id);
+    const me = roomInfo.room.persons.find(player => player.account_id === account_id)
     me.title = config.title
     me.avatar_id = config.skin[config.main_character_id]
     return roomInfo
@@ -140,7 +153,7 @@
     if (!bagInfo.bag) bagInfo.bag = {}
     if (!bagInfo.bag.items) bagInfo.bag.items = []
     itemSet = new Set(bagInfo.bag.items.map(item => item.item_id))
-    const needItems = cfg.item_definition.item.rows_.filter(item => (item.category === 4 || item.category === 5) && !itemSet.has(item.id))
+    const needItems = window.cfg.item_definition.item.rows_.filter(item => (item.category === 4 || item.category === 5) && !itemSet.has(item.id))
     bagInfo.bag.items = bagInfo.bag.items.concat(needItems.map(item => ({
       item_id: item.id,
       stack: 1,
@@ -150,31 +163,47 @@
   // 更换角色
   hookReq('Lobby', 'changeMainCharacter', function (info, callback) {
     config.main_character_id = info.character_id
-    if (!config.views[info.character_id]) config.views[info.character_id] = []
+    if (!config.views[info.character_id]) {
+      config.views[info.character_id] = characterMap.has(info.character_id) ? characterMap.get(info.character_id).views.slice() : []
+    }
     saveConfig()
-    if (characterMap.has(info.character_id)) {
+    if (characterMap.has(info.character_id) && acturalCharacter !== info.character_id) {
       acturalCharacter = info.character_id
       return [info, callback]
     }
   })
+  function changeView(views, key, info) {
+    let index = views.findIndex(view => view.slot === info.slot)
+    if (index !== -1 && views[index][key] === info[key]) return false // 装上本已有的东西
+    if (index === -1) {
+      if (info[key] === 0) return false // 卸下本没有的东西
+      index = views.length
+    }
+    if (info[key] === 0) views.splice(index, 1)
+    else views[index] = {
+      slot: info.slot,
+      [key]: info[key],
+    }
+    return true
+  }
   // 更换角色装扮
   hookReq('Lobby', 'changeCharacterView', function (info, callback) {
     if (!config.views[info.character_id]) config.views[info.character_id] = []
-    let index = config.views[info.character_id].findIndex(view => view.slot === info.slot)
-    if (index === -1) index = config.views[info.character_id].length
-    if (info.value === 0) config.views[info.character_id].splice(index, 1)
-    else config.views[info.character_id][index] = {
-      slot: info.slot,
-      item_id: info.item_id,
+    if (changeView(config.views[info.character_id], 'item_id', info)) saveConfig()
+    const char = characterMap.get(info.character_id)
+    if (char && itemSet.has(info.item_id) && changeView(char.views, 'item_id', info)) {
+      return [info, callback]
     }
-    saveConfig()
-    if (characterMap.has(info.character_id) && itemSet.has(info.item_id)) return [info, callback]
   })
   // 更换角色皮肤
   hookReq('Lobby', 'changeCharacterSkin', function (info, callback) {
     config.skin[info.character_id] = info.skin
     saveConfig()
-    if (characterMap.has(info.character_id) && skinSet.has(info.skin)) return [info, callback]
+    const char = characterMap.get(info.character_id)
+    if (char && skinSet.has(info.skin) && char.skin !== info.skin) {
+      char.skin = info.skin
+      return [info, callback]
+    }
   })
   // 升级角色、给角色送礼物
   hookReq('Lobby', ['upgradeCharacter', 'sendGiftToCharacter'], function (info, callback) {
@@ -182,36 +211,34 @@
     setTimeout(callback, 0, 'error')
     console.log('这功能能不能用你自己心里没点AC数吗')
   })
-  // 称号列表
+  // 记录 acturalTitleSet，修改称号列表
   let acturalTitleSet
   hookRes('Lobby', 'fetchTitleList', function (titleList) {
-    acturalTitleList = new Set(titleList.title_list)
+    acturalTitleSet = new Set(titleList.title_list)
+    acturalTitleSet.add(0)
     return {
-      title_list: cfg.item_definition.title.rows_.map(title => title.id).filter(id => id !== 600001)
+      title_list: window.cfg.item_definition.title.rows_.map(title => title.id).filter(id => id !== 600001)
     }
   })
-  // 使用称号
+  // 更换称号
   hookReq('Lobby', 'useTitle', function (info, callback) {
     config.title = info.title
     saveConfig()
-    if (info.title === 0 || acturalTitleSet.has(info.title)) return [info, callback]
+    if (info.title !== acturalTitle && acturalTitleSet.has(info.title)) return [info, callback]
   })
-  // 获取牌桌牌背样式
+  // 记录 acturalCommonView，修改牌桌牌背样式
+  let acturalCommonView
   hookRes('Lobby', 'fetchCommonView', function (common_view) {
+    acturalCommonView = common_view.slots
     return {
-      slots: config.common_view,
+      slots: config.common_view.slice(),
     }
   })
-  // 修改牌桌牌背样式
+  // 更换牌桌牌背样式
   hookReq('Lobby', 'changeCommonView', function (info, callback) {
-    let index = config.common_view.findIndex(view => view.slot === info.slot)
-    if (index === -1) index = config.common_view.length
-    if (info.value === 0) config.common_view.splice(index, 1)
-    else config.common_view[index] = {
-      slot: info.slot,
-      value: info.value,
+    if (changeView(config.common_view, 'value', info)) saveConfig()
+    if (itemSet.has(info.value) && changeView(acturalCommonView, 'value', info)) {
+      return [info, callback]
     }
-    saveConfig()
-    if (itemSet.has(info.value)) return [info, callback]
   })
 }())
