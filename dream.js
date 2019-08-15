@@ -62,8 +62,7 @@
   })()
   // 设置
   const config = localStorage.getItem('8q_config')
-    ? JSON.parse(localStorage.getItem('8q_config'))
-    : {
+    ? JSON.parse(localStorage.getItem('8q_config')) : {
       title: 600016,
       main_character_id: 200001,
       skin: {
@@ -131,7 +130,7 @@
         extra_emoji: emojiGroup.map(emoji => emoji.sub_id)
       })
       charInfo.skins.push(char.init_skin)
-      if (char.full_fetter_skin) charInfo.skins.push(char.full_fetter_skin)
+      if (char.can_marry) charInfo.skins.push(char.full_fetter_skin)
       if (char.skin_lib) {
         for (let skin of char.skin_lib) {
           if (skin) charInfo.skins.push(skin)
@@ -235,8 +234,7 @@
     config.main_character_id = info.character_id
     if (!config.views[info.character_id]) {
       config.views[info.character_id] = characterMap.has(info.character_id)
-        ? characterMap.get(info.character_id).views.slice()
-        : []
+        ? characterMap.get(info.character_id).views.slice() : []
     }
     saveConfig()
     if (
