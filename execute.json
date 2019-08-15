@@ -3,5 +3,9 @@
   "author": "8q",
   "description": "梦里啥都有",
   "entry": "dream.js",
-  "sync": false
+  "sync": false,
+  "executePreferences": {
+    "localStorage": true,
+    "writeableWindowObject": true
+  }
 }
